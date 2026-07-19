@@ -1744,15 +1744,15 @@ static int normalizedExitCodeFromWaitStatus(int status) {
 
 - (void)saveAppStatus {
     NSDictionary* status = @{
-                             @"proxyState": @(proxyState),
-                             @"proxyMode": @(proxyMode),
-                             @"selectedServerIndex": @(selectedServerIndex),
-                             @"selectedCusServerIndex": @(selectedCusServerIndex),
-                             @"useCusProfile": @(useCusProfile),
-                             @"selectedRoutingSet":@(_selectedRoutingSet),
-                             @"useMultipleServer": @(useMultipleServer),
-                             @"selectedPacFileName": selectedPacFileName
-                             };
+                              @"proxyState": @(proxyState),
+                              @"proxyMode": @(proxyMode),
+                              @"selectedServerIndex": @(selectedServerIndex),
+                              @"selectedCusServerIndex": @(selectedCusServerIndex),
+                              @"useCusProfile": @(useCusProfile),
+                              @"selectedRoutingSet":@(_selectedRoutingSet),
+                              @"useMultipleServer": @(useMultipleServer),
+                              @"selectedPacFileName": selectedPacFileName ?: @"pac.js"
+                              };
     [[NSUserDefaults standardUserDefaults] setObject:status forKey:@"appStatus"];
 }
 
@@ -1989,12 +1989,24 @@ static int normalizedExitCodeFromWaitStatus(int status) {
 
 - (void)normalizeCurrentRuntimeSelections {
     NSUInteger outboundCount = profiles.count + customOutbounds.count + _subsOutbounds.count;
-    selectedServerIndex = MIN((NSInteger)outboundCount - 1, selectedServerIndex);
     if (outboundCount > 0) {
+        selectedServerIndex = MIN((NSInteger)outboundCount - 1, selectedServerIndex);
         selectedServerIndex = MAX(selectedServerIndex, 0);
+    } else {
+        selectedServerIndex = -1;
     }
-    selectedCusServerIndex = MIN((NSInteger)cusProfiles.count - 1, selectedCusServerIndex);
-    _selectedRoutingSet = MIN((NSInteger)_routingRuleSets.count - 1, _selectedRoutingSet);
+    if (cusProfiles.count > 0) {
+        selectedCusServerIndex = MIN((NSInteger)cusProfiles.count - 1, selectedCusServerIndex);
+        selectedCusServerIndex = MAX(selectedCusServerIndex, -1);
+    } else {
+        selectedCusServerIndex = -1;
+    }
+    if (_routingRuleSets.count > 0) {
+        _selectedRoutingSet = MIN((NSInteger)_routingRuleSets.count - 1, _selectedRoutingSet);
+        _selectedRoutingSet = MAX(_selectedRoutingSet, 0);
+    } else {
+        _selectedRoutingSet = 0;
+    }
 
     if ((!useMultipleServer && selectedServerIndex == -1 && selectedCusServerIndex == -1) || (useMultipleServer && outboundCount < 1)) {
         proxyState = false;
@@ -2236,10 +2248,12 @@ static int normalizedExitCodeFromWaitStatus(int status) {
 
 - (IBAction)didChangeStatus:(id)sender {
     [self applyStatusChangeFromSender:sender startupRestore:NO];
+    [self saveAppStatus];
 }
 
 - (IBAction)didChangeMode:(id)sender {
     [self applyModeChangeFromSender:sender userInitiated:YES];
+    [self saveAppStatus];
 }
 
 - (void)updateMenus {
@@ -2528,6 +2542,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
 -(IBAction)switchRoutingSet:(id)sender {
     _selectedRoutingSet = [sender tag];
     [self coreConfigDidChange:self];
+    [self saveAppStatus];
 }
 
 - (void)switchServer:(id)sender {
@@ -2546,6 +2561,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
     }
     NSLog(@"use cus pro:%hhd, select %ld, select cus %ld", useCusProfile, (long)selectedServerIndex, selectedCusServerIndex);
     [self coreConfigDidChange:self];
+    [self saveAppStatus];
 }
 
 -(void)unloadV2ray {
