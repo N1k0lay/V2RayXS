@@ -2674,7 +2674,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
                 aRule[@"outboundTag"] = currentMainTag;
             }
         }
-    } else {
+    } else if (allProxyTags.count > 0) {
         // replace outbound tag main with balancetag
         for (NSMutableDictionary* aRule in fullConfig[@"routing"][@"rules"]) {
             if ([@"main" isEqualToString:aRule[@"outboundTag"]]) {
@@ -2682,7 +2682,14 @@ static int normalizedExitCodeFromWaitStatus(int status) {
                 [aRule setObject:@"balance" forKey:@"balancerTag"];
             }
         }
-        
+    } else {
+        // no proxy outbound yet, route main directly instead of emitting a
+        // balancer with an empty selector, which the core refuses to start
+        for (NSMutableDictionary* aRule in fullConfig[@"routing"][@"rules"]) {
+            if ([@"main" isEqualToString:aRule[@"outboundTag"]]) {
+                aRule[@"outboundTag"] = @"direct";
+            }
+        }
     }
 
     // NSLog(@"%@", allOutbounds);
