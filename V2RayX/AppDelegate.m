@@ -135,6 +135,7 @@ static BOOL helperTunSessionActive = NO;
 static NSDictionary* helperTunSessionStatus = nil;
 static NSString* const kMinimumSupportedXrayTunVersion = @"26.1.23";
 static NSString* const kMinimumRemovedTLSAllowInsecureVersion = @"26.3.27";
+static NSString* const kMinimumRemovedLegacyKCPVersion = @"26.3.27";
 static int const kXrayTunFDTarget = 3;
 
 static NSString* const kStoredTunLeaseIdKey = @"xrayTunLeaseId";
@@ -2700,6 +2701,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
         }
     }
     BOOL rejectsTLSAllowInsecure = [self currentCoreRejectsTLSAllowInsecure];
+    BOOL rejectsLegacyKCP = [self currentCoreRejectsLegacyKCP];
     if (usebalance) {
         // if balancer is used, add all outbounds into config file, and add all tags to the balancer selector
         fullConfig[@"routing"][@"balancers"] = @[@{
@@ -2708,7 +2710,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
                                                      }];
         NSMutableArray* normalizedOutbounds = [[NSMutableArray alloc] init];
         for (NSDictionary* outbound in allUniqueTagOutboundDict.allValues) {
-            NSMutableDictionary* normalizedOutbound = [self runtimeOutboundFromStoredOutbound:outbound rejectsAllowInsecure:rejectsTLSAllowInsecure];
+            NSMutableDictionary* normalizedOutbound = [self runtimeOutboundFromStoredOutbound:outbound rejectsAllowInsecure:rejectsTLSAllowInsecure rejectsLegacyKCP:rejectsLegacyKCP];
             [normalizedOutbounds addObject:normalizedOutbound];
         }
         fullConfig[@"outbounds"] = normalizedOutbounds;
@@ -2716,7 +2718,7 @@ static int normalizedExitCodeFromWaitStatus(int status) {
         // otherwise, we convert all collected outbounds into an array
         NSMutableArray* normalizedOutbounds = [[NSMutableArray alloc] init];
         for (NSDictionary* outbound in configOutboundDict.allValues) {
-            NSMutableDictionary* normalizedOutbound = [self runtimeOutboundFromStoredOutbound:outbound rejectsAllowInsecure:rejectsTLSAllowInsecure];
+            NSMutableDictionary* normalizedOutbound = [self runtimeOutboundFromStoredOutbound:outbound rejectsAllowInsecure:rejectsTLSAllowInsecure rejectsLegacyKCP:rejectsLegacyKCP];
             [normalizedOutbounds addObject:normalizedOutbound];
         }
         fullConfig[@"outbounds"] = normalizedOutbounds;
@@ -2829,6 +2831,17 @@ static int normalizedExitCodeFromWaitStatus(int status) {
     return [detectedVersion compare:kMinimumRemovedTLSAllowInsecureVersion options:NSNumericSearch] != NSOrderedAscending;
 }
 
+- (BOOL)currentCoreRejectsLegacyKCP {
+    if (![self isCurrentCoreXray]) {
+        return NO;
+    }
+    NSString* detectedVersion = [self currentCoreSemanticVersion];
+    if (detectedVersion.length == 0) {
+        return YES;
+    }
+    return [detectedVersion compare:kMinimumRemovedLegacyKCPVersion options:NSNumericSearch] != NSOrderedAscending;
+}
+
 - (BOOL)isManagedProfileOutbound:(NSDictionary*)outbound {
     if (![outbound isKindOfClass:[NSDictionary class]]) {
         return NO;
@@ -2848,14 +2861,14 @@ static int normalizedExitCodeFromWaitStatus(int status) {
     return [ServerProfile profilesFromJson:outbound].count > 0;
 }
 
-- (NSMutableDictionary*)runtimeOutboundFromStoredOutbound:(NSDictionary*)outbound rejectsAllowInsecure:(BOOL)rejectsAllowInsecure {
+- (NSMutableDictionary*)runtimeOutboundFromStoredOutbound:(NSDictionary*)outbound rejectsAllowInsecure:(BOOL)rejectsAllowInsecure rejectsLegacyKCP:(BOOL)rejectsLegacyKCP {
     if ([self isManagedProfileOutbound:outbound]) {
-        return [self runtimeManagedProfileOutbound:outbound rejectsAllowInsecure:rejectsAllowInsecure];
+        return [self runtimeManagedProfileOutbound:outbound rejectsAllowInsecure:rejectsAllowInsecure rejectsLegacyKCP:rejectsLegacyKCP];
     }
     return [outbound mutableDeepCopy];
 }
 
-- (NSMutableDictionary*)runtimeManagedProfileOutbound:(NSDictionary*)outbound rejectsAllowInsecure:(BOOL)rejectsAllowInsecure {
+- (NSMutableDictionary*)runtimeManagedProfileOutbound:(NSDictionary*)outbound rejectsAllowInsecure:(BOOL)rejectsAllowInsecure rejectsLegacyKCP:(BOOL)rejectsLegacyKCP {
     NSMutableDictionary* runtimeOutbound = [outbound mutableDeepCopy];
     NSMutableDictionary* streamSettings = [runtimeOutbound[@"streamSettings"] isKindOfClass:[NSDictionary class]] ? [runtimeOutbound[@"streamSettings"] mutableDeepCopy] : nil;
     if (streamSettings == nil) {
@@ -2869,7 +2882,17 @@ static int normalizedExitCodeFromWaitStatus(int status) {
         NSDictionary* storedTLSSettings = [streamSettings[@"xtlsSettings"] isKindOfClass:[NSDictionary class]] ? streamSettings[@"xtlsSettings"] : @{};
         streamSettings[@"xtlsSettings"] = [self runtimeTLSSettingsFromStoredTLSSettings:storedTLSSettings outbound:runtimeOutbound settingName:@"xtlsSettings" rejectsAllowInsecure:rejectsAllowInsecure];
     }
-    runtimeOutbound[@"streamSettings"] = normalizedStreamSettingsForXrayForCore(streamSettings, rejectsAllowInsecure);
+    NSMutableDictionary* normalizedStreamSettings = normalizedStreamSettingsForXrayForCore(streamSettings, rejectsAllowInsecure);
+    if (rejectsLegacyKCP) {
+        // legacy mKCP header & seed were replaced by the finalmask header-* forms
+        NSMutableDictionary* kcpSettings = [normalizedStreamSettings[@"kcpSettings"] isKindOfClass:[NSDictionary class]] ? [normalizedStreamSettings[@"kcpSettings"] mutableDeepCopy] : nil;
+        if (kcpSettings != nil) {
+            [kcpSettings removeObjectForKey:@"header"];
+            [kcpSettings removeObjectForKey:@"seed"];
+            normalizedStreamSettings[@"kcpSettings"] = kcpSettings;
+        }
+    }
+    runtimeOutbound[@"streamSettings"] = normalizedStreamSettings;
     return runtimeOutbound;
 }
 
