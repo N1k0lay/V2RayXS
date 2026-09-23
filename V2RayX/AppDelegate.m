@@ -2892,6 +2892,18 @@ static int normalizedExitCodeFromWaitStatus(int status) {
             normalizedStreamSettings[@"kcpSettings"] = kcpSettings;
         }
     }
+    NSString* network = [normalizedStreamSettings[@"network"] isKindOfClass:[NSString class]] ? normalizedStreamSettings[@"network"] : @"";
+    if ([network isEqualToString:@"xhttp"] || [network isEqualToString:@"grpc"]) {
+        // both transports run over HTTP/2, a stored http/1.1 alpn breaks them
+        for (NSString* tlsSettingName in @[@"tlsSettings", @"xtlsSettings"]) {
+            NSMutableDictionary* tlsSettings = [normalizedStreamSettings[tlsSettingName] isKindOfClass:[NSDictionary class]] ? [normalizedStreamSettings[tlsSettingName] mutableDeepCopy] : nil;
+            NSArray* alpn = [tlsSettings[@"alpn"] isKindOfClass:[NSArray class]] ? tlsSettings[@"alpn"] : nil;
+            if (alpn.count == 1 && [alpn[0] isEqualToString:@"http/1.1"]) {
+                [tlsSettings removeObjectForKey:@"alpn"];
+                normalizedStreamSettings[tlsSettingName] = tlsSettings;
+            }
+        }
+    }
     runtimeOutbound[@"streamSettings"] = normalizedStreamSettings;
     return runtimeOutbound;
 }
